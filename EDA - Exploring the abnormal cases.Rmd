@@ -1,0 +1,205 @@
+---
+title: "Exploratory Data Analysis"
+author: "Justin Charbonneau"
+date: "`r Sys.time()`"
+output:
+  html_document:
+    collapsed: FALSE
+    theme: cosmo
+    toc: yes
+    toc_float: no
+    toc_depth: 2
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, 
+                      warning = FALSE, 
+                      out.width = "100%", 
+                      message = FALSE
+                      )
+```
+
+# Introduction
+
+This is an analysis of the data from Career Village. The first part of this notebook will explore the datasets offered to us. The second part will provide a reproducible way to recommend student questions to the appropriate professionals. In total, the questions of 15311 students will be analyzed. The following is one of many ways to analyze the data provided.
+
+## Data Source
+
+All data was collected by Career Village from 2011 to 2017.
+
+## Installing necessary packages
+
+```{r echo=FALSE, message=FALSE}
+# For data cleaning
+library(DT)
+library(tidyverse)
+library(lubridate)
+
+# For text analysis
+library(wordcloud)
+```
+
+## Loading data
+
+```{r message=FALSE,warning=FALSE,echo=FALSE}
+# Import students data
+students <- read_csv('Data/students.csv')
+
+# Import the actual questions asked
+questions <- read_csv('Data/questions.csv')
+```
+
+This is an introductory look at the questions data.
+
+```{r}
+nrow(questions)
+```
+```{r}
+ncol(questions)
+```
+
+There are 23,931 questions in this dataset, with 8 columns.
+
+We'll also take a quick look at the data to see what does the data frame look like.
+
+```{r}
+questions %>%
+  head(5) %>%
+  datatable()
+```
+
+The __questions_date_added__ column will be useful for us to analyze when the first questions was asked and see how long did this person remain in the pipeline. We will also be able to find out how many questions did the users have.
+
+# Data Exploration
+
+## Number of Questions
+
+The first question that came to mind was: **__How many questions to the users have?__**
+
+To answer this, I could simply calculate the average by users, but it wouldn't be impactful. Here are two histograms that highlight the number of questions students have.
+
+
+```{r}
+questions <- questions %>%
+  mutate(date_start = as.numeric(as.Date(as.POSIXlt(questions_date_added))))
+
+# Create a table for the minimum occurence
+min_table <- questions %>%
+  group_by(questions_author_id) %>%
+  summarise(min = min(date_start))
+
+questions <- merge(questions, min_table, by = "questions_author_id")
+
+# Recombine both datasets to include the min for each
+questions <- questions %>%
+  mutate("elapsed_days" = (date_start - min))
+
+# Total questions per day
+dummy <- questions %>%
+  mutate(questions_author_id = as.factor(questions_author_id)) %>%
+  group_by(questions_author_id,date_start) %>%
+  summarise(total_questions = n())
+
+new_dummy <- distinct(merge(dummy,questions, by=c("questions_author_id","date_start"))[,c('questions_author_id','elapsed_days','total_questions')])
+```
+
+We'll load the data frame from the modified data table. This new data frame has the __elapsed_days__ which indicate the number of days elapsed from the first time a question was asked. __total_questions__ indicated the number of questions the user asked in that day.
+
+```{r}
+new_dummy %>%
+  head() %>%
+  datatable()
+```
+
+As you can see bellow, more than 50% of the students only have one question in one day and more than 93 % have less than 2 questions. This means that there is a good opportunity to classify these questions, as students most often have only one question at one point in time. If there was many questions per day, then maybe a chatbot could be a good solution!
+
+```{r}
+# Looking at the top 5 
+dummy_1 <- new_dummy %>%
+  filter(total_questions < 6) %>%
+  group_by(total_questions) %>%
+  summarize(freq = n()) %>%
+  mutate(filler = ifelse(total_questions <= 2, "fill", "filler"),
+         total_questions = as.factor(total_questions))
+
+ggplot(data = dummy_1, aes(x=total_questions,  y=freq, fill = filler)) + 
+  geom_bar(stat="identity") +
+  geom_text(aes(label=freq), vjust=-0.3, size=3.5) +
+  scale_fill_manual(values = c("#133d82","grey"), guide = F) +
+  theme_minimal() +
+  theme(axis.title = element_text(face = "bold", size = 13), 
+        title = element_text(face = "bold", size = 16),
+        legend.position = "none") +
+  labs(title="Total Number of Questions by User (under 5)", x = "Number of questions", y = "Count of users") +
+  geom_curve(x = 3, xend = 2, y = 7000, yend = 6200, size = .3, 
+             arrow = arrow(length = unit(.03, "npc")),
+             curvature = 0.1) +
+  annotate("text", x = 4.1, y = 7000, label = "Most students only ask 1-2 questions", 
+           color = "#5b5b5b")
+
+# Theme style inspired by Michael Johnson (https://www.kaggle.com/mistermichael/careervillage-exploration)
+
+```
+
+Looking at the trailing histogram, we can see that for some cases, students may have many many questions. These students probably need better guidance or maybe their questions weren't answered?
+
+```{r}
+dummy_2 <- new_dummy %>%
+  filter(total_questions > 5) %>%
+  group_by(total_questions) %>%
+  summarize(freq = n()) %>%
+  mutate(filler = ifelse(total_questions > 30, "fill", "filler"),
+         total_questions = as.factor(total_questions))
+
+# Continuation of the analysis for people who asked over 5 questions
+
+ggplot(data = dummy_2, aes(x=total_questions,  y=freq, fill = filler)) + 
+  geom_bar(stat="identity") +
+  geom_text(aes(label=freq), vjust=-0.3, size=3.5) +
+  theme_minimal() +
+  theme(axis.title = element_text(face = "bold", size = 13), 
+        title = element_text(face = "bold", size = 16),
+        legend.position = "none") +
+  labs(title="Total Number of Questions by User (over 5)", x = "Number of questions", y = "Count of users") +
+  scale_fill_manual(values = c("#133d82","grey"), guide = F) +
+  geom_curve(x = 12, xend = 14.2, y = 15, yend = 5, size = .3, 
+             arrow = arrow(length = unit(.03, "npc")),
+             curvature = -0.1) +
+  annotate("text", x = 10, y = 17, label = "Two students asked over 30 questions in the same day!", 
+           color = "#5b5b5b")
+
+# Theme style inspired by Michael Johnson (https://www.kaggle.com/mistermichael/careervillage-exploration)
+
+```
+
+
+Now I am curious to understand what is the pattern of the students who have many questions. **__Do they ask them all at once? Do they ask the questions periodicaly?__** 
+
+The following graph will help us understand. 
+
+I will only filter on those who have recuring questions over a 30 day period. I will also only look at a few, and see if there is anyting abnormal.
+
+```{r message=FALSE,warning=FALSE}
+
+filtered_dummy <- new_dummy %>%
+  filter(elapsed_days > 30)
+
+ggplot(data=filtered_dummy[0:50,], aes(x = elapsed_days, y = questions_author_id,size = total_questions))+
+  geom_point(colour = "turquoise4") +
+  theme_minimal() +
+  labs(title="Student Question Lifetime",x = 'Time (days)', y= 'Student Id')+
+  theme(axis.title = element_text(face = "bold", size = 13), 
+        title = element_text(face = "bold", size = 16)) +
+  geom_vline(xintercept = 365, size=0.5)
+```
+
+Most of the students stop asking questions after 1 year. (Vertical line indicates 365 days)
+
+On the other hand, some students have a lot of questions! I think it would be interesting to merge other datasets, and see the hashtags of those questions. Maybe they have something in common?
+
+More to come...
+
+Thanks!
+
+Follow me on IG ! @data_culture

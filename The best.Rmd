@@ -1,0 +1,268 @@
+---
+title: "AssignmentProblem"
+author: "Justin Charbonneau"
+date: '2019-03-05'
+output: html_document
+---
+
+# The solution
+
+```{r warning=FALSE, message=FALSE}
+library(tm)
+library(SnowballC)
+library(RColorBrewer)
+library(wordcloud)
+library(tidyverse)
+```
+
+
+```{r warning=FALSE, message=FALSE}
+# Load the data
+
+students <- read_csv('~/Desktop/Kaggle/D4G_CareerVillage/Data/students.csv')
+questions <- read_csv('~/Desktop/Kaggle/D4G_CareerVillage/Data/questions.csv')
+tags <- read_csv('~/Desktop/Kaggle/D4G_CareerVillage/Data/tags.csv')
+tag_users <- read_csv('~/Desktop/Kaggle/D4G_CareerVillage/Data/tag_users.csv')
+answers <- read_csv('~/Desktop/Kaggle/D4G_CareerVillage/Data/answers.csv')
+tag_questions <- read_csv('~/Desktop/Kaggle/D4G_CareerVillage/Data/tag_questions.csv')
+```
+
+
+
+## Issue
+
+A common problem for the questions is that the hashtags related to the questions aren't matched with the professionals hashtags.
+
+I will display this issue in a (question - professional) relationship.
+
+Question id: __47f55e85ce944242a5a347ab85a8ffb4__
+
+Professional id who answered this question: __4e9fe7ffb54c42eba0987c6119da9975__
+
+Hashtag Word Cloud related to the question
+
+Hashtag Word Cloud related to the professional
+
+```{r}
+tag_users <- tag_users %>%
+  plyr::rename(.,c("tag_users_tag_id"="tags_tag_id"))
+
+patterns <- c("#|-|!|@")
+
+tag_users_full <- inner_join(tags,tag_users, by ='tags_tag_id') %>%
+  mutate(tags_tag_name = str_replace_all(tags_tag_name, patterns,""),
+         question_user = 'u')
+
+tag_questions <- tag_questions %>%
+  plyr::rename(.,c("tag_questions_tag_id"="tags_tag_id"))
+
+tag_questions_full <- inner_join(tags,tag_questions, by ='tags_tag_id') %>%
+  mutate(tags_tag_name = str_replace_all(tags_tag_name, patterns,""),
+         question_user = 'q')
+```
+
+```{r}
+tags_user_specific <- tag_users_full %>%
+  filter(tag_users_user_id == '4e9fe7ffb54c42eba0987c6119da9975') %>%
+  select(-tag_users_user_id)
+
+tags_question_specific <- tag_questions_full %>%
+  filter(tag_questions_question_id == '47f55e85ce944242a5a347ab85a8ffb4') %>%
+  select(-tag_questions_question_id)
+
+
+
+
+
+```
+
+```{r}
+par(mfrow=c(1,2))
+
+tags_user_specific.Corpus<- Corpus(VectorSource(tags_user_specific$tags_tag_name))
+wordcloud(words = tags_user_specific.Corpus,max.words=Inf,scale=c(1,1),random.color = TRUE,random.order=FALSE, colors=brewer.pal(8, "Dark2"))
+
+tags_question_specific.Corpus<- Corpus(VectorSource(tags_question_specific$tags_tag_name))
+wordcloud(words = tags_question_specific.Corpus,max.words=Inf,scale=c(1,1),random.color = TRUE,random.order=FALSE, colors=brewer.pal(8, "Dark2"))
+```
+
+
+
+```{r}
+# Venn Diagram
+
+library(grid)
+library(futile.logger)
+library(VennDiagram)
+  
+professional <- tags_user_specific$tags_tag_name
+
+question <- tags_question_specific$tags_tag_name
+
+
+overlap <- calculate.overlap(
+  x = list(
+    "Question" = question,
+    "Professional" = professional
+    )
+  );
+
+```
+
+```{r}
+grid.newpage();
+venn.plot <- draw.pairwise.venn(length(overlap$a1),length(overlap$a2),length(overlap$a3),
+                                category = c("Question Hashtags","Professional Hashtags"),
+                                fill = c("dark blue", "orange"),
+                                alpha = rep(0.5,2),
+                                cat.pos = c(0,0),
+                                fontfamily = "serif",
+                                fontface = "plain",
+                                lty = "blank")
+grid.draw(venn.plot);
+```
+
+As you can see, they do not even have similar hashtags.
+
+This is why we need to implement a better matching algorithm.
+
+## Solution
+
+As you whitnessed above, the assignment of the questions don't go to the correct professionals.
+
+The proposed solution is simple, and effective. Also, it uses a library that is available in R.
+
+We need to feed a matrix of student questions and professionals.
+
+The rows will be the students questions, with ranking of which professionals can answer the question.
+
+This ranking will be deternmined by the number of occurence of the hashtags from the questions and the hashtags of the professionals. If a professional follows (career, architecture and newyork) and the question contains career and architecture, then the value will be 2.
+
+The hard part will be to calculate this matrix.
+
+For every question, we need to calculate the number of occurence of the hashtag for each professional.
+
+Let's dive in!
+
+We have a data frame tag_questions that contains every question with it's respective hashtags.
+
+tag_users contains both for the users and professionals. We would need to seperate the two, but for now, lets not for simplicity reasons.
+
+### Dummy example
+
+Note: We need a dummy data to fill in, as we need to have the same number of columns and rows for our matrix.
+
+```{r}
+question_hashtags <- tribble(
+  ~question_id,~ hashtag,
+  "q1", "datascience",
+  "q1", "statistics",
+  "q2", "architecture",
+  "q2", "building",
+  "q2", "newyork",
+  "q3", "soccer",
+  "q3", "scholarship",
+  "dummy", ""
+)
+
+professionals_hashtags <- tribble(
+  ~question_id,~ hashtag,
+  "p1", "football",
+  "p1", "sports",
+  "p1", "soccer",
+  "p2", "architect",
+  "p2", "architecture",
+  "p2", "washington",
+  "p3", "career",
+  "p3", "statistics",
+  "p4", "datascience",
+  "p4", "statistics"
+)
+
+```
+
+Quickly see what my two data frames look like.
+
+```{r}
+View(question_hashtags)
+View(professionals_hashtags)
+```
+
+To get the count, we will left_join.
+
+```{r}
+left_df <- left_join(question_hashtags,professionals_hashtags,by = "hashtag")
+```
+
+Get the count as a new data frame.
+
+```{r}
+cnts <- left_df %>%
+  group_by(question_id.x,question_id.y) %>%
+  summarise(.,n())
+```
+
+A bit more manipulation to get the perfect data frame.
+
+```{r}
+new_df <- cnts %>%
+  spread(., key="question_id.y",value="n()")
+```
+
+```{r}
+new_df_long <- new_df %>%
+  gather(p1,p2,p3,p4,key="professional",value="count")
+```
+
+```{r}
+max_counts_per_question <- new_df_long %>%
+  group_by(question_id.x) %>%
+  summarise(max_val = max(count, na.rm = TRUE))
+```
+
+```{r}
+# Rejoin the max with the df.
+new_df_long_max <- full_join(new_df_long,max_counts_per_question,by="question_id.x") %>%
+  mutate(rank = max_val-count+1) %>%
+  mutate(rank = ifelse(is.na(rank), 9, rank)) %>%
+  select(question_id.x,professional,rank)
+
+new_df_short_max <- new_df_long_max %>%
+  spread(professional,rank)
+```
+
+### Solving the assignment problem
+
+```{r}
+library(lpSolve)
+
+matrix_cols <- new_df_short_max[,-1]
+m_temp <- as.matrix(sapply(matrix_cols, as.numeric))  
+
+# Set col names and row names
+col_name <- colnames(matrix_cols)
+question_name <- pull(new_df_short_max, "question_id.x")
+
+dimnames(m_temp)[[1]] <- question_name
+dimnames(m_temp)[[2]] <- col_name
+
+# View the cost ranked matrix
+m_temp
+
+fm <- lp.assign(m_temp)
+
+# View the assigned matrix
+fm$solution
+```
+
+Yooray! We have assigned the questions to the appropriate professionals. On of the professionals (p3) was assigned a dummy data, which means he wouldn't get any questions to answer.
+
+## Next step is applying this to the real data
+
+
+
+
+
+
+
+
